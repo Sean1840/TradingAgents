@@ -127,3 +127,40 @@ def test_unknown_env_var_is_ignored(monkeypatch):
         TRADINGAGENTS_NONEXISTENT_KEY="oops",
     )
     assert "nonexistent_key" not in dc.DEFAULT_CONFIG
+
+
+def test_data_vendors_json_override(monkeypatch):
+    """TRADINGAGENTS_DATA_VENDORS takes a JSON object and merges one level deep."""
+    dc = _reload_with_env(
+        monkeypatch,
+        TRADINGAGENTS_DATA_VENDORS='{"core_stock_apis": "hithink", "fundamental_data": "hithink,yfinance"}',
+    )
+    vendors = dc.DEFAULT_CONFIG["data_vendors"]
+    assert vendors["core_stock_apis"] == "hithink"
+    assert vendors["fundamental_data"] == "hithink,yfinance"
+    # untouched categories keep their defaults
+    assert vendors["news_data"] == "yfinance"
+    assert vendors["macro_data"] == "fred"
+    assert vendors["prediction_markets"] == "polymarket"
+
+
+def test_tool_vendors_json_override(monkeypatch):
+    dc = _reload_with_env(
+        monkeypatch,
+        TRADINGAGENTS_TOOL_VENDORS='{"get_stock_data": "hithink"}',
+    )
+    assert dc.DEFAULT_CONFIG["tool_vendors"]["get_stock_data"] == "hithink"
+
+
+def test_empty_vendors_override_is_passthrough(monkeypatch):
+    dc = _reload_with_env(monkeypatch, TRADINGAGENTS_DATA_VENDORS="")
+    assert dc.DEFAULT_CONFIG["data_vendors"]["core_stock_apis"] == "yfinance"
+
+
+def test_invalid_vendors_json_raises(monkeypatch):
+    """Garbage JSON for a dict-typed override must fail loudly, like bad ints."""
+    monkeypatch.setenv("TRADINGAGENTS_DATA_VENDORS", "core_stock_apis=hithink")
+    with pytest.raises(ValueError, match="TRADINGAGENTS_DATA_VENDORS"):
+        importlib.reload(default_config_module)
+    monkeypatch.delenv("TRADINGAGENTS_DATA_VENDORS", raising=False)
+    importlib.reload(default_config_module)

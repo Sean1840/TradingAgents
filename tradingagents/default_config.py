@@ -1,3 +1,4 @@
+import json
 import os
 
 _TRADINGAGENTS_HOME = os.path.join(os.path.expanduser("~"), ".tradingagents")
@@ -19,6 +20,11 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_BENCHMARK_TICKER":     "benchmark_ticker",
     "TRADINGAGENTS_TEMPERATURE":          "temperature",
     "TRADINGAGENTS_LLM_MAX_RETRIES":      "llm_max_retries",
+    # Data-vendor selection (JSON object, merged one level deep, e.g.
+    # TRADINGAGENTS_DATA_VENDORS={"core_stock_apis":"hithink"} keeps the other
+    # categories at their defaults while routing A-share prices via HiThink).
+    "TRADINGAGENTS_DATA_VENDORS":         "data_vendors",
+    "TRADINGAGENTS_TOOL_VENDORS":         "tool_vendors",
     # Provider-specific reasoning/thinking knobs (None = each provider's own
     # default). Settable here for non-interactive runs; the CLI also offers an
     # interactive choice, which is skipped when the matching var is set.
@@ -62,8 +68,18 @@ def _apply_env_overrides(config: dict) -> dict:
         if raw is None or raw == "":
             continue
         try:
-            config[key] = _coerce(raw, config.get(key))
-        except ValueError as exc:
+            if isinstance(config.get(key), dict):
+                # Dict-typed keys (data_vendors / tool_vendors) take a JSON
+                # object and merge one level deep, so a partial override like
+                # {"core_stock_apis": "hithink"} keeps the other categories at
+                # their defaults.
+                parsed = json.loads(raw)
+                if not isinstance(parsed, dict):
+                    raise ValueError(f"expected a JSON object, got {raw!r}")
+                config[key].update(parsed)
+            else:
+                config[key] = _coerce(raw, config.get(key))
+        except (ValueError, json.JSONDecodeError) as exc:
             raise ValueError(f"Invalid value for {env_var}: {exc}") from exc
     return config
 
@@ -130,17 +146,21 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # The configured value is the exact vendor chain — requests are NOT silently
     # routed to vendors you didn't choose. For ordered fallback, list several,
     # e.g. "yfinance,alpha_vantage". "default" uses all available vendors.
+    # "hithink" is the Tonghuashun A-share vendor (needs HITHINK_FINANCE_API_KEY,
+    # see https://github.com/HiThink-Tech/Financial-API); use it for A-share
+    # analysis, e.g. "hithink,yfinance" so non-A-share symbols fall through.
     "data_vendors": {
-        "core_stock_apis": "yfinance",       # Options: alpha_vantage, yfinance
-        "technical_indicators": "yfinance",  # Options: alpha_vantage, yfinance
-        "fundamental_data": "yfinance",      # Options: alpha_vantage, yfinance
-        "news_data": "yfinance",             # Options: alpha_vantage, yfinance
+        "core_stock_apis": "yfinance",       # Options: alpha_vantage, yfinance, hithink
+        "technical_indicators": "yfinance",  # Options: alpha_vantage, yfinance, hithink
+        "fundamental_data": "yfinance",      # Options: alpha_vantage, yfinance, hithink
+        "news_data": "yfinance",             # Options: alpha_vantage, yfinance, cnnews (中文新闻: 东方财富公告+新浪7x24)
         "macro_data": "fred",                # Options: fred (needs FRED_API_KEY)
         "prediction_markets": "polymarket",  # Options: polymarket (keyless)
     },
     # Tool-level configuration (takes precedence over category-level)
     "tool_vendors": {
         # Example: "get_stock_data": "alpha_vantage",  # Override category default
+        # Example: "get_stock_data": "hithink",        # A-share OHLCV via HiThink
     },
     # Benchmark for alpha calculation in the reflection layer.
     # ``benchmark_ticker`` (when set) overrides the suffix map for all

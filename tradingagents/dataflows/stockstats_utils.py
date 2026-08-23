@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import time
 from typing import Annotated
 
@@ -145,6 +146,54 @@ def _needs_same_day_refresh(data_file, curr_date_dt, today_date) -> bool:
     return time.time() - os.path.getmtime(data_file) > OHLCV_CACHE_TTL_SECONDS
 
 
+def _looks_like_a_share(symbol: str) -> bool:
+    """True for symbols the HiThink vendor can plausibly serve: a bare/thscode
+    A-share code or anything containing CJK characters (Chinese names)."""
+    s = (symbol or "").strip()
+    if re.fullmatch(r"\d{6}(\.(SH|SZ|BJ))?", s, flags=re.IGNORECASE):
+        return True
+    return any("\u4e00" <= ch <= "\u9fff" for ch in s)
+
+
+def _download_ohlcv_provider_aware(
+    symbol: str, canonical: str, start_str: str, end_str: str
+) -> pd.DataFrame:
+    """Download an OHLCV frame: HiThink for A-shares (when configured), else yfinance.
+
+    The verified-snapshot and stockstats indicator paths both feed from
+    ``load_ohlcv``, which used to be yfinance-only — an A-share symbol like
+    ``600519.SH`` is not a valid Yahoo symbol, so those paths could never work
+    for the HiThink vendor. Try HiThink first when the symbol is plausibly an
+    A-share (or the user explicitly configured the hithink vendor), and fall
+    through to yfinance on any failure so non-A-share behavior is unchanged.
+    """
+    vendors = str(get_config().get("data_vendors", {}).get("core_stock_apis", "default"))
+    use_hithink = "hithink" in [v.strip() for v in vendors.split(",")] or _looks_like_a_share(symbol)
+    if use_hithink:
+        try:
+            from .hithink_stock import fetch_ohlcv_frame
+
+            frame = fetch_ohlcv_frame(symbol, end_str, lookback_days=5 * 366)
+            if frame is not None and not frame.empty and "Close" in frame.columns:
+                logger.info("Using HiThink OHLCV for %s (provider-aware load_ohlcv)", symbol)
+                return frame
+        except NoMarketDataError:
+            logger.info("HiThink has no OHLCV for %s; falling back to yfinance", symbol)
+        except Exception as exc:  # noqa: BLE001 — vendor unavailable; fall through
+            logger.info("HiThink OHLCV unavailable for %s (%s); falling back to yfinance", symbol, exc)
+
+    downloaded = yf_retry(lambda: yf.download(
+        canonical,
+        start=start_str,
+        end=end_str,
+        multi_level_index=False,
+        progress=False,
+        auto_adjust=True,
+    ))
+    downloaded = _ensure_date_column(downloaded.reset_index())
+    return downloaded
+
+
 def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
     """Fetch OHLCV data with caching, filtered to prevent look-ahead bias.
 
@@ -192,19 +241,11 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
             data = cached
 
     if data is None:
-        downloaded = yf_retry(lambda: yf.download(
-            canonical,
-            start=start_str,
-            end=end_str,
-            multi_level_index=False,
-            progress=False,
-            auto_adjust=True,
-        ))
-        downloaded = _ensure_date_column(downloaded.reset_index())
+        downloaded = _download_ohlcv_provider_aware(symbol, canonical, start_str, end_str)
         # Only cache real data — never persist an empty frame.
         if downloaded.empty or "Close" not in downloaded.columns:
             raise NoMarketDataError(
-                symbol, canonical, "Yahoo Finance returned no rows"
+                symbol, canonical, "no rows from any configured vendor"
             )
         downloaded.to_csv(data_file, index=False, encoding="utf-8")
         data = downloaded

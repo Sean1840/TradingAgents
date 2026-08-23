@@ -193,6 +193,105 @@ An interface will appear showing results as they load, letting you track the age
   <img src="assets/cli/cli_transaction.png" width="100%" style="display: inline-block; margin: 0 2%;">
 </p>
 
+## A-Share (China) Support: HiThink Data + Output Pipeline
+
+TradingAgents ships with a first-class **A-share (沪深京) integration** built on the official
+Tonghuashun / HiThink data service ([Financial-API](https://github.com/HiThink-Tech/Financial-API)),
+plus Chinese-language news and a structured `output/` deliverables layout.
+
+### Data vendors
+
+| vendor | covers | config key |
+| --- | --- | --- |
+| `hithink` | A-share OHLCV (forward/backward adjusted), financial statements, valuation snapshot, financial indicators | `core_stock_apis` / `technical_indicators` / `fundamental_data` |
+| `cnnews` | Chinese news: Eastmoney company announcements + Sina 7x24 feed (keyless) | `news_data` |
+| `yfinance` | fallback for non-A-share symbols (news, verified snapshot, etc.) | any category |
+
+Enable with a JSON override (merged one level deep over the defaults):
+
+```bash
+# .env or exported env vars
+HITHINK_FINANCE_API_KEY=sk-xxxx                     # https://fuyao.aicubes.cn/admin
+TRADINGAGENTS_LLM_PROVIDER=deepseek                 # or qwen / glm / kimi / openai ...
+DEEPSEEK_API_KEY=sk-xxxx
+TRADINGAGENTS_DEEP_THINK_LLM=deepseek-v4-pro
+TRADINGAGENTS_QUICK_THINK_LLM=deepseek-v4-flash
+TRADINGAGENTS_OUTPUT_LANGUAGE=Chinese
+TRADINGAGENTS_DATA_VENDORS={"core_stock_apis":"hithink,yfinance","technical_indicators":"hithink,yfinance","fundamental_data":"hithink,yfinance","news_data":"cnnews,yfinance"}
+```
+
+The HiThink key is also auto-read from the hithink-finance CLI credentials file
+(`%APPDATA%\hithink-finance\credentials.env`). Symbols resolve automatically: full
+thscodes (`600519.SH`), bare codes (`600519`) and Chinese names (`贵州茅台`) all work.
+
+### Run a full multi-agent analysis on an A-share
+
+```bash
+python run_a_share_analysis.py 600519.SH 2026-08-21     # ticker + analysis date
+python run_a_share_analysis.py 688432.SH 2026-08-21
+```
+
+All analyst reports (technical / sentiment / news / fundamentals) and the final
+trader proposal are produced in Chinese, using HiThink data and Chinese news.
+
+### Output layout
+
+Every deliverable lands under `output/` (override with `TRADINGAGENTS_OUTPUT_DIR`):
+
+```
+output/
+├── 江波龙-301308/                      # <股票名>-<代码>
+│   ├── 20260823-232505/                # <生成时间> (one folder per run)
+│   │   ├── 江波龙-301308_TradingAgents分析报告_2025-01-01_2026-08-21.md
+│   │   └── 江波龙-301308_TradingAgents分析报告_2025-01-01_2026-08-21.html
+│   └── data/                           # intermediate data, reused across runs
+│       └── 20260823-232505-run.log
+└── .store/ohlcv/688432.csv             # cumulative per-code OHLCV store
+```
+
+Report filenames carry the **stock name + code + data validity range** (the actual
+window the analysis was based on). Each run folder holds a Markdown text version and
+a styled HTML version of the same report.
+
+### Data report generator (raw HiThink snapshot)
+
+```bash
+python hithink_report_gen.py 688432.SH 有研硅              # quote/valuation/financials/K-line/hot-rank
+python hithink_report_gen.py 600519.SH 贵州茅台 --backfill 2  # pull 2 extra ~360-day windows of history
+```
+
+Raw API responses are cached per stock under `output/<股票名>-<代码>/data/` (TTL
+`HITHINK_REPORT_CACHE_TTL`, default 6h; `--fresh` bypasses), so re-runs reuse prior
+fetches. `--backfill N` grows the persistent OHLCV store
+(`output/.store/ohlcv/<code>.csv`) past the API's single-window cap — accumulated
+history enables longer-range analysis over time.
+
+### Convert a run log into reports
+
+```bash
+python run_a_share_analysis.py 301308.SZ 2026-08-21 2>&1 | tee run.log
+python scripts/log_to_reports.py run.log 301308.SZ 江波龙
+```
+
+The converter extracts the five report sections, auto-derives the verdict card from
+the trader proposal, and keeps the raw log under `data/` as intermediate data.
+
+### Caching for repeated analyses
+
+- `TRADINGAGENTS_HITHINK_CACHE=1` — disk-cache HiThink responses
+  (`output/.cache/hithink/`, TTL `TRADINGAGENTS_HITHINK_CACHE_TTL`), so repeated
+  LLM runs skip re-fetching.
+- `TRADINGAGENTS_HITHINK_STORE=1` — accumulate every fetched K-line bar into the
+  per-code OHLCV store; indicator computation then reuses stored history and only
+  fetches missing ≤360-day slices.
+
+### Tests
+
+```bash
+python -m pytest tests/test_hithink.py tests/test_cn_news.py \
+  tests/test_hithink_store.py tests/test_vendor_routing.py -q
+```
+
 ## TradingAgents Package
 
 ### Implementation Details
