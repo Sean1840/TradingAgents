@@ -199,6 +199,11 @@ TradingAgents ships with a first-class **A-share (沪深京) integration** built
 Tonghuashun / HiThink data service ([Financial-API](https://github.com/HiThink-Tech/Financial-API)),
 plus Chinese-language news and a structured `output/` deliverables layout.
 
+> 📖 A dedicated, self-contained walkthrough of every A-share-specific piece — data vendors,
+> vendor routing, market-rules injection, 涨停池/龙虎榜/热股榜/交易日历 tools, the persistent
+> OHLCV store, and the report pipeline — lives in **[A_SHARE_README.md](A_SHARE_README.md)**.
+> This section is the quick-start summary.
+
 ### Data vendors
 
 | vendor | covers | config key |
