@@ -1,5 +1,5 @@
 """Tests for the shared report-chart helpers (SVG line chart, ASCII sparkline,
-K-line parsing from run logs)."""
+K-line parsing from run logs) and the log-to-report section classifier."""
 import unittest
 
 import pytest
@@ -64,3 +64,47 @@ Date,Open,High,Low,Close,Volume,Turnover
         self.assertIn("<svg", out)
         self.assertIn("终点 2026-08-21 收 1300.00", out)
         self.assertIn('fill="#d9262b"', out)  # endpoint marker color
+
+
+@pytest.mark.unit
+class LogReportClassifierTests(unittest.TestCase):
+    """classify() must route each analyst's report to the right section even
+    when reports mention each other's keywords (news mentioning 基本面/ROE,
+    fundamentals leaking FINAL TRANSACTION PROPOSAL + 均线)."""
+
+    def _classify(self):
+        import importlib
+        import scripts.log_to_reports as mod
+        mod = importlib.reload(mod)
+        return mod.classify
+
+    def test_news_report_with_fundamentals_keywords_stays_news(self):
+        cls = self._classify()
+        seg = (
+            "# 新闻研究报告：德明利（001309.SZ）\n"
+            "## 一、标的基本面定位\n"
+            "警惕周期高点 PE 陷阱，需交叉验证 PB、ROE 与现金流。"
+        )
+        self.assertEqual(cls(seg), "news")
+
+    def test_fundamentals_report_with_leaked_proposal_stays_fundamentals(self):
+        cls = self._classify()
+        seg = (
+            "# 长鑫科技（688825.SH）基本面深度分析报告\n"
+            "FINAL TRANSACTION PROPOSAL: **HOLD**\n"
+            "## 一、公司概况\n## 三、利润表分析\n"
+            "均线、ATR、RSI 等词不应改变路由。"
+        )
+        self.assertEqual(cls(seg), "fundamentals")
+
+    def test_market_report_still_market(self):
+        cls = self._classify()
+        seg = "# 688432.SH 深度技术分析报告\nFINAL TRANSACTION PROPOSAL: **HOLD**\n均线与 RSI 解读"
+        self.assertEqual(cls(seg), "market")
+
+    def test_trader_and_sentiment_unaffected(self):
+        cls = self._classify()
+        self.assertEqual(
+            cls("**Action**: Sell\n**Reasoning**: x\n**Position Sizing**: y"), "trader"
+        )
+        self.assertEqual(cls("# 情绪分析报告\n总体情绪：中性"), "sentiment")

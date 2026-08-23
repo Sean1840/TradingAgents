@@ -27,6 +27,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+try:
+    import pandas as pd  # noqa: E402 — for the OHLCV-store fallback
+except Exception:  # noqa: BLE001 — pandas absent; chart fallback disabled
+    pd = None  # type: ignore[assignment]
+
 from tradingagents import report_io  # noqa: E402
 from tradingagents.report_chart import (  # noqa: E402
     ascii_sparkline,
@@ -91,15 +96,23 @@ def classify(seg: str) -> str | None:
     s = seg
     if "**Action**" in s and ("Reasoning" in s or "Position Sizing" in s):
         return "trader"
+    # News first: its heading markers are unambiguous, and a news report may
+    # mention 基本面/ROE in passing, which would otherwise be mis-routed to
+    # fundamentals (observed with 德明利/江波龙/寒武纪).
+    if "新闻与宏观" in s or "宏观与市场新闻" in s or "新闻研究" in s:
+        return "news"
+    # The fundamentals signature (基本面 + a statement name) is far more
+    # specific than the market heuristic below, so check it first: a
+    # fundamentals report may contain leaked lines like "FINAL TRANSACTION
+    # PROPOSAL" plus 均线/ATR words, which would otherwise be mis-routed to
+    # market (observed with 长鑫科技 688825).
+    if "基本面" in s and any(k in s for k in ("资产负债表", "利润表")):
+        return "fundamentals"
     if "技术分析报告" in s or ("FINAL TRANSACTION PROPOSAL" in s and
                                any(k in s for k in ("均线", "RSI", "ATR", "布林"))):
         return "market"
     if "情绪分析报告" in s or "Overall Sentiment" in s or "总体情绪" in s:
         return "sentiment"
-    if "新闻与宏观" in s or "宏观与市场新闻" in s or "新闻研究" in s:
-        return "news"
-    if "基本面" in s and any(k in s for k in ("公司概况", "资产负债表", "ROE", "利润表")):
-        return "fundamentals"
     return None
 
 
@@ -270,13 +283,50 @@ SECTION_TITLES = [
 ]
 
 
-def build_price_chart(log_text: str) -> tuple[str, str, dict]:
+def _bars_from_store(thscode: str, log_text: str) -> list[dict]:
+    """Bars for ``thscode`` from the persistent OHLCV store, clipped to the
+    log's data window (earliest start_date .. latest end_date of get_stock_data
+    calls). Returns ``[]`` when the store is missing/empty."""
+    try:
+        from tradingagents.dataflows.hithink_store import load_ohlcv
+    except Exception:  # noqa: BLE001 — store unavailable; chart simply omitted
+        return []
+    if pd is None:
+        return []
+    df = load_ohlcv(thscode)
+    if df is None or df.empty:
+        return []
+    starts = [d for d in re.findall(r"start_date:\s*(\d{4}-\d{2}-\d{2})", log_text)]
+    ends = [d for d in re.findall(r"end_date:\s*(\d{4}-\d{2}-\d{2})", log_text)]
+    if starts:
+        df = df[df["Date"] >= pd.to_datetime(min(starts))]
+    if ends:
+        df = df[df["Date"] <= pd.to_datetime(max(ends))]
+    if df.empty:
+        return []
+    return [
+        {
+            "Date": row.Date.strftime("%Y-%m-%d"),
+            "Open": row.Open, "High": row.High,
+            "Low": row.Low, "Close": row.Close,
+            "Volume": row.Volume,
+        }
+        for row in df.itertuples(index=False)
+    ]
+
+
+def build_price_chart(log_text: str, thscode: str = "") -> tuple[str, str, dict]:
     """Build the price-visualization section from the bars the run fetched.
 
     Returns ``(svg_html, md_block, meta)`` where ``meta`` has first/last date,
     low/high and the endpoint close, matching the report's data window.
     """
     bars = parse_stock_csv_blocks(log_text)
+    # Newer runs may not embed the OHLCV CSV in the log (parallel tool calls
+    # print only the last tool message); fall back to the persistent store so
+    # the report still carries the price chart over the analysis window.
+    if not bars and thscode:
+        bars = _bars_from_store(thscode, log_text)
     if not bars:
         return "", "", {}
     closes = [b["Close"] for b in bars]
@@ -398,7 +448,7 @@ def main() -> int:
     data_start, data_end = extract_data_range(text)
 
     verdict = auto_verdict(reports.get("trader", ""))
-    chart_html, chart_md, _meta = build_price_chart(text)
+    chart_html, chart_md, _meta = build_price_chart(text, args.thscode)
     md = render_text(args.name, args.thscode, verdict, reports, SECTION_TITLES,
                      analysis_date, (data_start, data_end), chart_md=chart_md)
     html_doc = render_html(args.name, args.thscode, verdict, reports, SECTION_TITLES,
