@@ -1,5 +1,12 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
+from tradingagents.agents.utils.a_share_market_tools import (
+    get_dragon_tiger,
+    get_hot_stocks,
+    get_market_context,
+    is_trading_day,
+)
+from tradingagents.agents.utils.a_share_rules import get_a_share_rules_context
 from tradingagents.agents.utils.agent_utils import (
     get_indicators,
     get_instrument_context_from_state,
@@ -19,6 +26,10 @@ def create_market_analyst(llm):
             get_stock_data,
             get_indicators,
             get_verified_market_snapshot,
+            get_market_context,
+            get_dragon_tiger,
+            get_hot_stocks,
+            is_trading_day,
         ]
 
         system_message = (
@@ -50,9 +61,12 @@ Volume-Based Indicators:
 
 Before writing the final report, call get_verified_market_snapshot for this ticker and the current date, and treat it as the source of truth for any exact OHLCV, price-level, or indicator-value claim. If another tool's output conflicts with the verified snapshot, flag the discrepancy rather than inventing a reconciled number. Do not claim historical validation, support/resistance bounces, or exact percentage moves unless they are directly supported by tool output with concrete dates and prices.
 
+For A-shares, additionally call get_market_context(curr_date) to assess the market regime (limit-up/limit-down breadth, consecutive-limit-up ladder), and use get_dragon_tiger / get_hot_stocks when relevant to the ticker. A-share price limits (涨跌停 ±10%/±20%) distort momentum and RSI readings near the limit — note explicitly when a bar closed at its limit, and treat limit-locked days as non-tradable rather than as technical signals.
+
 Write a very detailed and nuanced report of the trends you observe. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."""
             + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
             + get_language_instruction()
+            + get_a_share_rules_context()
         )
 
         prompt = ChatPromptTemplate.from_messages(

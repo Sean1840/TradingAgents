@@ -234,6 +234,29 @@ python run_a_share_analysis.py 688432.SH 2026-08-21
 All analyst reports (technical / sentiment / news / fundamentals) and the final
 trader proposal are produced in Chinese, using HiThink data and Chinese news.
 
+### A-share market-structure tools and rules
+
+The analyst prompts are adapted for the A-share microstructure. Every agent
+(analysts, researchers, trader, risk team, portfolio manager) receives an
+A-share rules context (T+1 settlement, price limits ±10%/±20% with
+limit-locked days non-tradable, ST/delisting flags, stamp duty, disclosure
+rhythm, cyclical PE-trap warning), applied only when the ticker is an A-share.
+
+The market and news analysts also get A-share-specific tools:
+
+- `get_market_context` — limit-up / limit-down / limit-break pools + the
+  consecutive-limit-up ladder (连板天梯) for a date (market regime)
+- `get_dragon_tiger` — 龙虎榜 institutional vs hot-money net flows (filterable
+  by thscode)
+- `get_hot_stocks` — hot-stock rank (热股榜) as a retail-attention proxy
+- `is_trading_day` — A-share trading calendar check (Chinese holidays)
+
+The sentiment analyst receives the hot-rank leaderboard as a retail-attention
+proxy when the overseas social sources are empty for an A-share.
+
+Alpha benchmarks for A-shares are mapped automatically (`.SH`/`.SZ`/`.BJ`
+suffixes → Shanghai/Shenzhen indices), instead of falling back to SPY.
+
 ### Output layout
 
 Every deliverable lands under `output/` (override with `TRADINGAGENTS_OUTPUT_DIR`):

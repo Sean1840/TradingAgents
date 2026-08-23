@@ -179,6 +179,8 @@ DEFAULT_CONFIG = _apply_env_overrides({
         ".AX":  "^AXJO",       # Australia (ASX 200)
         ".SS":  "000001.SS",   # Shanghai (SSE Composite)
         ".SZ":  "399001.SZ",   # Shenzhen (SZSE Component)
+        ".SH":  "000001.SS",   # A-share thscode (600519.SH) -> Shanghai Composite
+        ".BJ":  "000001.SS",   # Beijing-listed A-shares -> Shanghai Composite (proxy)
         "":     "SPY",         # default for US-listed tickers (no suffix)
     },
 })

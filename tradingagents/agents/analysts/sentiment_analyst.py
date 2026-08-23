@@ -25,11 +25,13 @@ See: https://github.com/TauricResearch/TradingAgents/issues/796
 """
 
 from datetime import datetime, timedelta
+import re
 
 from langchain_core.messages import AIMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from tradingagents.agents.schemas import SentimentReport, render_sentiment_report
+from tradingagents.agents.utils.a_share_rules import get_a_share_rules_context
 from tradingagents.agents.utils.agent_utils import (
     get_instrument_context_from_state,
     get_language_instruction,
@@ -40,8 +42,11 @@ from tradingagents.agents.utils.structured import (
     bind_structured,
     invoke_structured_or_freetext,
 )
+from tradingagents.dataflows import hithink_special
 from tradingagents.dataflows.reddit import fetch_reddit_posts
 from tradingagents.dataflows.stocktwits import fetch_stocktwits_messages
+
+_A_SHARE = re.compile(r"^\d{6}\.(SH|SZ|BJ)$", re.IGNORECASE)
 
 
 def _seven_days_back(trade_date: str) -> str:
@@ -70,6 +75,9 @@ def create_sentiment_analyst(llm):
         news_block = get_news.func(ticker, start_date, end_date)
         stocktwits_block = fetch_stocktwits_messages(ticker, limit=30)
         reddit_block = fetch_reddit_posts(ticker)
+        # A-shares: the overseas social sources are usually empty, so add the
+        # hot-rank leaderboard as a retail-attention proxy when applicable.
+        hot_block = hithink_special.hot_stocks("day") if _A_SHARE.fullmatch(ticker.strip()) else ""
 
         system_message = _build_system_message(
             ticker=ticker,
@@ -78,6 +86,7 @@ def create_sentiment_analyst(llm):
             news_block=news_block,
             stocktwits_block=stocktwits_block,
             reddit_block=reddit_block,
+            hot_block=hot_block,
         )
 
         prompt = ChatPromptTemplate.from_messages(
@@ -131,8 +140,22 @@ def _build_system_message(
     news_block: str,
     stocktwits_block: str,
     reddit_block: str,
+    hot_block: str = "",
 ) -> str:
     """Assemble the sentiment-analyst system message with structured data blocks."""
+    hot_section = ""
+    if hot_block:
+        hot_section = f"""
+### A-share hot-rank (热股榜) — retail-attention proxy for A-shares
+The overseas social sources above usually have NO coverage for A-shares; treat
+an empty StockTwits/Reddit block as 'no overseas retail signal', not as neutral
+sentiment. Use this leaderboard (rank, heat, rank trend) as the A-share retail
+attention proxy instead, and say so explicitly in the report.
+
+<start_of_hot_rank>
+{hot_block}
+<end_of_hot_rank>
+"""
     return f"""You are a financial market sentiment analyst. Your task is to produce a comprehensive sentiment report for {ticker} covering the period from {start_date} to {end_date}, drawing on three complementary data sources that have already been collected for you.
 
 ## Data sources (pre-fetched, in this prompt)
@@ -185,7 +208,8 @@ Fill the following fields:
 - **confidence**: low / medium / high, based on data quality and sample size.
 - **narrative**: Full source-by-source breakdown, divergences, dominant narrative themes, catalysts and risks, and a markdown summary table of key sentiment signals (direction, source, supporting evidence).
 
-{get_language_instruction()}"""
+{get_language_instruction()}
+{get_a_share_rules_context()}{hot_section}"""
 
 
 # ---------------------------------------------------------------------------
