@@ -1,6 +1,12 @@
 import contextlib
 import warnings
 
+from .compat import patch_httpx2_brotli
+
+# httpx2 2.12.0 breaks on brotli-compressed responses with google-brotli
+# installed; apply the decoder patch before any HTTP SDK is used.
+patch_httpx2_brotli()
+
 # Load .env files at package import so DEFAULT_CONFIG's env-var overlay
 # (and every llm_clients consumer) sees the user's keys regardless of
 # which entry point started the process. find_dotenv(usecwd=True) walks
