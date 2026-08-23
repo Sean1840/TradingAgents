@@ -22,10 +22,17 @@ from tradingagents.agents.utils.agent_utils import (
     get_insider_transactions,
     get_macro_indicators,
     get_news,
+    get_policy_news,
     get_prediction_markets,
     get_stock_data,
     get_verified_market_snapshot,
     resolve_instrument_identity,
+)
+from tradingagents.agents.utils.a_share_market_tools import (
+    get_dragon_tiger,
+    get_hot_stocks,
+    get_market_context,
+    is_trading_day,
 )
 from tradingagents.agents.utils.memory import TradingMemoryLog
 from tradingagents.dataflows.config import set_config
@@ -198,6 +205,14 @@ class TradingAgentsGraph:
                     # LLM and required by its prompt; must be executable here or
                     # the call fails and the model reports it "unavailable").
                     get_verified_market_snapshot,
+                    # A-share microstructure tools (bound by the analyst prompt
+                    # via bind_tools; they must be executable in the ToolNode or
+                    # the model gets "not a valid tool" errors and reports them
+                    # unavailable — see #A-share adaptation).
+                    get_market_context,
+                    get_dragon_tiger,
+                    get_hot_stocks,
+                    is_trading_day,
                 ]
             ),
             "social": ToolNode(
@@ -214,6 +229,12 @@ class TradingAgentsGraph:
                     get_insider_transactions,
                     get_macro_indicators,
                     get_prediction_markets,
+                    # Official Chinese policy news (新华社/人民日报/国务院/央行/
+                    # 证监会/两会/政治局/国常会) plus A-share market regime
+                    # helpers, bound by the news analyst prompt.
+                    get_policy_news,
+                    get_market_context,
+                    is_trading_day,
                 ]
             ),
             "fundamentals": ToolNode(
