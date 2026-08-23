@@ -97,6 +97,30 @@ class LogReportClassifierTests(unittest.TestCase):
         )
         self.assertEqual(cls(seg), "fundamentals")
 
+    def test_fundamentals_report_using_资产负债结构_not_stolen(self):
+        cls = self._classify()
+        seg = (
+            "# `301308.SZ`（江波龙）基本面深度研究报告\n"
+            "## 四、资产负债结构\n"
+            "## 六、历史财务轨迹\n"
+            "资产负债率 56.1%"
+        )
+        self.assertEqual(cls(seg), "fundamentals")
+
+    def test_sentiment_mentioning_roe_not_stolen_by_fundamentals(self):
+        cls = self._classify()
+        seg = (
+            "**Overall Sentiment:** **Neutral** (Score: 5.0/10)\n"
+            "## 688825.SH 情绪分析报告\n"
+            "需交叉验证 PB、ROE 与现金流。"
+        )
+        self.assertEqual(cls(seg), "sentiment")
+
+    def test_news_report_with_新闻与趋势_heading_stays_news(self):
+        cls = self._classify()
+        seg = "# 新闻与趋势研究报告：688825.SH（长鑫科技集团）\n## 一、标的概况"
+        self.assertEqual(cls(seg), "news")
+
     def test_market_report_still_market(self):
         cls = self._classify()
         seg = "# 688432.SH 深度技术分析报告\nFINAL TRANSACTION PROPOSAL: **HOLD**\n均线与 RSI 解读"

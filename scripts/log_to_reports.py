@@ -99,20 +99,24 @@ def classify(seg: str) -> str | None:
     # News first: its heading markers are unambiguous, and a news report may
     # mention 基本面/ROE in passing, which would otherwise be mis-routed to
     # fundamentals (observed with 德明利/江波龙/寒武纪).
-    if "新闻与宏观" in s or "宏观与市场新闻" in s or "新闻研究" in s:
+    if "新闻与宏观" in s or "宏观与市场新闻" in s or "新闻研究" in s or "新闻与趋势" in s:
         return "news"
-    # The fundamentals signature (基本面 + a statement name) is far more
-    # specific than the market heuristic below, so check it first: a
+    # Sentiment next: the report is headed by 情绪分析/Overall Sentiment, a
+    # strong marker. Checking it before fundamentals stops the broader
+    # fundamentals markers (资产负债/现金流量/ROE appear in sentiment reports
+    # too) from stealing the sentiment section.
+    if "情绪分析报告" in s or "Overall Sentiment" in s or "总体情绪" in s or "市场情绪报告" in s:
+        return "sentiment"
+    # The fundamentals signature (基本面 + a statement-name/财务 marker) is far
+    # more specific than the market heuristic below, so check it first: a
     # fundamentals report may contain leaked lines like "FINAL TRANSACTION
     # PROPOSAL" plus 均线/ATR words, which would otherwise be mis-routed to
     # market (observed with 长鑫科技 688825).
-    if "基本面" in s and any(k in s for k in ("资产负债表", "利润表")):
+    if "基本面" in s and any(k in s for k in ("公司概况", "资产负债", "利润表", "现金流量", "历史财务", "营业成本")):
         return "fundamentals"
     if "技术分析报告" in s or ("FINAL TRANSACTION PROPOSAL" in s and
                                any(k in s for k in ("均线", "RSI", "ATR", "布林"))):
         return "market"
-    if "情绪分析报告" in s or "Overall Sentiment" in s or "总体情绪" in s:
-        return "sentiment"
     return None
 
 
