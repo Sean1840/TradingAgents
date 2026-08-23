@@ -46,6 +46,30 @@ def get_global_news(
     return route_to_vendor("get_global_news", curr_date, look_back_days, limit)
 
 @tool
+def get_policy_news(
+    curr_date: Annotated[str, "Current date in yyyy-mm-dd format"],
+    look_back_days: Annotated[int | None, "Days to look back; omit to use the configured default"] = None,
+    limit: Annotated[int | None, "Max articles to return; omit to use the configured default"] = None,
+) -> str:
+    """
+    Official Chinese policy / government / big-meeting news: central-media RSS
+    (新华社、人民日报 时政) plus Sina 7x24 items matching policy keywords
+    (国务院/央行/证监会/两会/政治局会议/中央经济工作会议/国常会/降准降息...).
+
+    Args:
+        curr_date (str): Current date in yyyy-mm-dd format.
+        look_back_days (int): Number of days to look back; omit to inherit config.
+        limit (int): Maximum number of articles; omit to inherit config.
+
+    Returns:
+        str: A formatted list of official Chinese policy news items.
+    """
+    from tradingagents.dataflows.cn_news import get_policy_news as _impl
+
+    return _impl(curr_date, look_back_days, limit)
+
+
+@tool
 def get_insider_transactions(
     ticker: Annotated[str, "ticker symbol"],
 ) -> str:

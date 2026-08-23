@@ -39,6 +39,7 @@ from tradingagents.dataflows.hithink_store import (
     merge_ohlcv,
     missing_windows,
 )
+from tradingagents.report_chart import svg_line_chart
 from tradingagents.report_io import (
     cache_key,
     code_of,
@@ -406,54 +407,6 @@ footer{margin-top:32px;color:var(--muted);font-size:12px;border-top:1px solid va
 .tag{display:inline-block;background:#eff6ff;color:var(--accent);border-radius:6px;
 padding:1px 8px;font-size:12px;margin-left:6px;}
 """
-
-
-def svg_line_chart(points, width=960, height=300, color="#2563eb", label="收盘价",
-                   min_label=None, max_label=None, extra_lines=()):
-    """points: list[(date_str, value)]. Renders an SVG polyline with axes."""
-    pad_l, pad_r, pad_t, pad_b = 46, 14, 18, 26
-    if not points:
-        return "<p class='note'>无数据</p>"
-    values = [p[1] for p in points]
-    vmin, vmax = min(values), max(values)
-    span = (vmax - vmin) or 1.0
-    iw, ih = width - pad_l - pad_r, height - pad_t - pad_b
-    n = len(points)
-    step = iw / (n - 1) if n > 1 else 0
-
-    def xy(i, v):
-        return pad_l + i * step, pad_t + (vmax - v) / span * ih
-
-    path = "M " + " L ".join(f"{xy(i, v)[0]:.1f},{xy(i, v)[1]:.1f}" for i, v in enumerate(values))
-    extra_paths = []
-    for color2, vals in extra_lines:
-        if len(vals) != n:
-            continue
-        pts = [(i, vals[i]) for i in range(n) if vals[i] is not None]
-        if len(pts) >= 2:
-            extra_paths.append(
-                (color2, "M " + " L ".join(f"{xy(i, v)[0]:.1f},{xy(i, v)[1]:.1f}" for i, v in pts))
-            )
-
-    grid = ""
-    for k in range(5):
-        y = pad_t + ih * k / 4
-        v = vmax - span * k / 4
-        grid += f'<line x1="{pad_l}" y1="{y:.1f}" x2="{width - pad_r}" y2="{y:.1f}" stroke="#eef0f3"/>'
-        grid += f'<text x="{pad_l - 6}" y="{y + 4:.1f}" font-size="11" fill="#9ca3af" text-anchor="end">{v:,.2f}</text>'
-    xlabels = [points[0][0], points[n // 2][0], points[-1][0]]
-    for idx, (xi, lab) in enumerate(zip((0, n // 2, n - 1), xlabels)):
-        grid += f'<text x="{pad_l + step * xi:.1f}" y="{height - 8}" font-size="11" fill="#9ca3af" text-anchor="middle">{lab}</text>'
-
-    title = (min_label or f"{label} 最低 {vmin:,.2f}") + " · " + (max_label or f"最高 {vmax:,.2f}")
-    return f"""
-<svg class="chart" viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg">
-  <rect width="{width}" height="{height}" fill="#fff"/>
-  {grid}
-  {''.join(f'<path d="{p}" fill="none" stroke="{c}" stroke-width="1.4"/>' for c, p in extra_paths)}
-  <path d="{path}" fill="none" stroke="{color}" stroke-width="1.8"/>
-  <text x="{pad_l}" y="14" font-size="12" fill="#6b7280">{html.escape(title)}</text>
-</svg>"""
 
 
 def statements_table(items):
@@ -884,6 +837,8 @@ def main():
 {svg_line_chart([(ms_to_date(b["date_ms"]), b["close_price"]) for b in bars],
                 min_label=f"区间最低 {lo:,.2f}" if lo is not None else None,
                 max_label=f"区间最高 {hi:,.2f}" if hi is not None else None,
+                endpoint_label=(f"终点 {ms_to_date(bars[-1]['date_ms'])} 收 {bars[-1]['close_price']:,.2f}"
+                                if bars else None),
                 extra_lines=(("#f59e0b", ma20),))}
 <div class="note">黄线为 MA20。区间涨跌幅：{fmt_ratio(ret)}%（{ms_to_date(bars[0]['date_ms'])} → {ms_to_date(bars[-1]['date_ms'])}，前复权口径）</div>
 </div>

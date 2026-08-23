@@ -28,6 +28,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tradingagents import report_io  # noqa: E402
+from tradingagents.report_chart import (  # noqa: E402
+    ascii_sparkline,
+    parse_stock_csv_blocks,
+    svg_line_chart,
+)
 
 CSS = """
 :root{--bg:#f5f7fa;--card:#fff;--ink:#1f2937;--muted:#6b7280;--accent:#2563eb;
@@ -265,12 +270,59 @@ SECTION_TITLES = [
 ]
 
 
-def render_text(name, thscode, verdict, reports, order, analysis_date, data_range):
+def build_price_chart(log_text: str) -> tuple[str, str, dict]:
+    """Build the price-visualization section from the bars the run fetched.
+
+    Returns ``(svg_html, md_block, meta)`` where ``meta`` has first/last date,
+    low/high and the endpoint close, matching the report's data window.
+    """
+    bars = parse_stock_csv_blocks(log_text)
+    if not bars:
+        return "", "", {}
+    closes = [b["Close"] for b in bars]
+    low = min(closes)
+    high = max(closes)
+    low_date = next(b["Date"] for b in bars if b["Close"] == low)
+    high_date = next(b["Date"] for b in bars if b["Close"] == high)
+    first, last = bars[0], bars[-1]
+    ret = (last["Close"] / first["Close"] - 1) * 100
+
+    ma20 = []
+    for i in range(len(closes)):
+        win = closes[max(0, i - 19): i + 1]
+        ma20.append(sum(win) / len(win))
+
+    meta = {
+        "first_date": first["Date"], "last_date": last["Date"],
+        "low": low, "low_date": low_date, "high": high, "high_date": high_date,
+        "end_close": last["Close"], "ret": ret, "n": len(bars),
+    }
+    svg = svg_line_chart(
+        [(b["Date"], b["Close"]) for b in bars],
+        min_label=f"最低 {low:,.2f}（{low_date}）",
+        max_label=f"最高 {high:,.2f}（{high_date}）",
+        endpoint_label=f"终点 {last['Date']} 收 {last['Close']:,.2f}",
+        extra_lines=(("#f59e0b", ma20),),
+    )
+    md = (
+        f"区间 {first['Date']} → {last['Date']}（{len(bars)} 个交易日）｜ "
+        f"最低 {low:,.2f}（{low_date}）｜ 最高 {high:,.2f}（{high_date}）｜ "
+        f"终点（{last['Date']}）收 {last['Close']:,.2f}，区间涨跌幅 {ret:+.2f}%\n\n"
+        f"走势（ASCII，每格=交易日序列）：`{ascii_sparkline(closes)}`\n\n"
+        f"> 完整走势曲线（含 MA20、最低/最高/终点标注）见 HTML 版图表。"
+    )
+    return svg, md, meta
+
+
+def render_text(name, thscode, verdict, reports, order, analysis_date, data_range,
+                chart_md: str = ""):
     line = "=" * 72
     range_txt = f" ｜ 数据有效范围：{data_range[0]} ~ {data_range[1]}" if data_range[0] else ""
     parts = [line, f"{name}（{thscode}）TradingAgents 多智能体分析报告",
              f"分析日期：{analysis_date}{range_txt} ｜ 数据源：同花顺 HiThink + 东方财富/新浪中文新闻 ｜ 引擎：DeepSeek LLM", line,
              "", "【最终交易提案】", verdict, ""]
+    if chart_md:
+        parts += ["", "◆ 股价走势（本次分析的数据区间）", "", chart_md, ""]
     for kind, title in order:
         content = reports.get(kind)
         if not content:
@@ -280,8 +332,16 @@ def render_text(name, thscode, verdict, reports, order, analysis_date, data_rang
     return "\n".join(parts)
 
 
-def render_html(name, thscode, verdict, reports, order, analysis_date, data_range):
+def render_html(name, thscode, verdict, reports, order, analysis_date, data_range,
+                chart_html: str = ""):
     body = []
+    if chart_html:
+        body.append(
+            "<h2>数据快照 · 股价走势（本次分析的数据区间）</h2>"
+            f"<div class='card'>{chart_html}"
+            "<div class='note'>曲线为本次分析所用前复权日线（黄线 MA20）；红点为终点（数据截至日），"
+            "绿/红标注分别为区间最低/最高，可与分析内容对照。</div></div>"
+        )
     for kind, title in order:
         content = reports.get(kind)
         if not content:
@@ -338,10 +398,11 @@ def main() -> int:
     data_start, data_end = extract_data_range(text)
 
     verdict = auto_verdict(reports.get("trader", ""))
+    chart_html, chart_md, _meta = build_price_chart(text)
     md = render_text(args.name, args.thscode, verdict, reports, SECTION_TITLES,
-                     analysis_date, (data_start, data_end))
+                     analysis_date, (data_start, data_end), chart_md=chart_md)
     html_doc = render_html(args.name, args.thscode, verdict, reports, SECTION_TITLES,
-                           analysis_date, (data_start, data_end))
+                           analysis_date, (data_start, data_end), chart_html=chart_html)
 
     # File names carry the stock identity (name + code) and the data validity
     # range (actual window the analysis was based on) so files can be shared

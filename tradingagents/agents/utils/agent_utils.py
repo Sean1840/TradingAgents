@@ -20,6 +20,7 @@ from tradingagents.agents.utils.news_data_tools import (
     get_global_news,
     get_insider_transactions,
     get_news,
+    get_policy_news,
 )
 from tradingagents.agents.utils.prediction_markets_tools import get_prediction_markets
 from tradingagents.agents.utils.technical_indicators_tools import get_indicators
@@ -36,6 +37,7 @@ __all__ = [
     "get_news",
     "get_global_news",
     "get_insider_transactions",
+    "get_policy_news",
     "get_macro_indicators",
     "get_prediction_markets",
     "get_verified_market_snapshot",
