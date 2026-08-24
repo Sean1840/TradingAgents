@@ -241,8 +241,14 @@ TRADINGAGENTS_HITHINK_CACHE_TTL=21600  # 秒，默认 6h
 TRADINGAGENTS_HITHINK_STORE=1          # 累加 K 线到 output/.store/ohlcv/（§9）
 
 # --- 雪球（可选）：A 股散户讨论情绪的第二代理 ---
-# 从雪球登录态 cookie 中取 xq_a_token；未配置时情绪分析师将该源报告为
-# DATA_UNAVAILABLE 并回退到热股榜。仅缓存标题/热度元数据，不转载全文。
+# 雪球 API 在阿里云 WAF 之后，纯 HTTP 客户端无法通过；推荐用真实 Chrome 的
+# DevTools 协议（页面内 fetch 自动携带 WAF 签名与 cookie 链）：
+#   XUEQIU_CDP_PORT=9333
+#   chrome --remote-debugging-port=9333 --user-data-dir=<profile> https://xueqiu.com/
+# 也可用 XUEQIU_A_TOKEN / XUEQIU_COOKIE（仅当 WAF 未强制时有效）。
+# 未配置时情绪分析师将该源报告为 DATA_UNAVAILABLE 并回退到热股榜。
+# 仅缓存标题/热度元数据，不转载全文。
+#XUEQIU_CDP_PORT=9333
 #XUEQIU_A_TOKEN=
 
 # --- 可选 ---

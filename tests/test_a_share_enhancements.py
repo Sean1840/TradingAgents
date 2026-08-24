@@ -85,15 +85,51 @@ class GlobalMarketContextTests(unittest.TestCase):
 
 @pytest.mark.unit
 class XueqiuSentimentTests(unittest.TestCase):
-    def test_missing_token_degrades(self):
+    def test_missing_token_and_cdp_degrades(self):
         from tradingagents.dataflows.xueqiu import get_xueqiu_sentiment
 
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("XUEQIU_A_TOKEN", None)
             os.environ.pop("XUEQIU_COOKIE", None)
+            os.environ.pop("XUEQIU_CDP_PORT", None)
             out = get_xueqiu_sentiment("688432.SH", "2026-08-21")
         self.assertTrue(out.startswith("DATA_UNAVAILABLE"))
-        self.assertIn("XUEQIU_A_TOKEN", out)
+        self.assertIn("XUEQIU_CDP_PORT", out)
+
+    def test_cdp_backend_renders_posts(self):
+        """With XUEQIU_CDP_PORT set and a page reachable, the CDP backend
+        formats real posts (WAF + cookie chain handled in the browser)."""
+        from tradingagents.dataflows import xueqiu as xq
+
+        fake_payload = {
+            "count": 3,
+            "list": [
+                {"title": "存储涨价利好<em>江波龙</em>", "created_at": 1787243400000, "like_count": 12},
+                {"title": "看好算力方向", "created_at": 1787243400000},
+                {"title": "窗口外旧帖", "created_at": 1700000000000},  # before cutoff
+            ],
+        }
+        with mock.patch.dict(os.environ, {"XUEQIU_CDP_PORT": "9333"}, clear=False), \
+             mock.patch.object(xq, "_cdp_fetch", return_value=fake_payload):
+            out = xq.get_xueqiu_sentiment("300308.SZ", "2026-08-21")
+        self.assertIn("[雪球·cdp]", out)
+        self.assertIn("存储涨价利好江波龙", out)   # HTML tags stripped
+        self.assertIn("偏多?", out)
+        self.assertNotIn("窗口外旧帖", out)        # look-ahead/out-of-window dropped
+
+    def test_cdp_unavailable_falls_back_to_http(self):
+        from tradingagents.dataflows import xueqiu as xq
+
+        fake_payload = {"count": 1, "list": [
+            {"title": "HTTP 降级帖", "created_at": 1787243400000},
+        ]}
+        with mock.patch.dict(os.environ, {"XUEQIU_CDP_PORT": "9333"}, clear=False), \
+             mock.patch.object(xq, "_cdp_fetch", return_value=None), \
+             mock.patch.object(xq, "_http_fetch", return_value=fake_payload), \
+             mock.patch.object(xq, "_token", return_value="tok"):
+            out = xq.get_xueqiu_sentiment("300308.SZ", "2026-08-21")
+        self.assertIn("[雪球·http]", out)
+        self.assertIn("HTTP 降级帖", out)
 
     def test_token_parsed_from_cookie_string(self):
         from tradingagents.dataflows.xueqiu import _token

@@ -5,21 +5,39 @@ discussion stream is a high-quality A-share sentiment signal that the overseas
 sources (StockTwits / Reddit) cannot cover. This module fetches the public
 discussion feed for a thscode and formats it for the sentiment analyst.
 
-Access model: the xueqiu public API requires an ``xq_a_token`` cookie. The
-token is read from ``XUEQIU_A_TOKEN`` (or the full cookie string in
-``XUEQIU_COOKIE``). Without a token — or when the request fails — the module
-returns a ``DATA_UNAVAILABLE: ...`` sentinel instead of raising, so the
-analyst turn never crashes and the report clearly marks the gap.
+Access model (two backends, tried in order):
 
-Only titles/summaries/heat are captured (cached for analysis, not re-published),
+1. **CDP backend (primary)** — the xueqiu API sits behind an Aliyun WAF that
+   requires a JS challenge signature and a logged-in cookie chain, which plain
+   HTTP clients cannot reproduce. A real Chrome with a logged-in session can.
+   This backend drives Chrome over the DevTools Protocol: it performs the API
+   fetch *inside* the page context (``fetch(..., credentials: 'include')``),
+   which carries the full cookie chain and the WAF signature automatically.
+   Chrome is expected to be reachable at ``XUEQIU_CDP_PORT`` (default 9333),
+   e.g. launched with::
+
+       chrome --remote-debugging-port=9333 --user-data-dir=<profile> https://xueqiu.com/
+
+   and logged in once. The ``.pydeps/login_xueqiu.py`` helper automates that.
+
+2. **HTTP backend (fallback)** — uses ``XUEQIU_A_TOKEN`` / ``XUEQIU_COOKIE``
+   with plain requests. Works only if the WAF is not enforcing for the
+   session; usually returns DATA_UNAVAILABLE now that the WAF is active.
+
+Both degrade to a ``DATA_UNAVAILABLE: ...`` sentinel instead of raising, so
+the analyst turn never crashes and the report clearly marks the gap. Only
+titles/summaries/heat are captured (cached for analysis, not re-published),
 and only items published on/before ``curr_date`` are kept (look-ahead safe).
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import os
 import re
+import urllib.request
 from datetime import datetime, timedelta
 
 import requests
@@ -61,24 +79,83 @@ def _fmt_ts(ms) -> str:
         return ""
 
 
-def get_xueqiu_sentiment(thscode: str, curr_date: str, look_back_days: int = 7, limit: int = 20) -> str:
-    """Xueqiu discussion stream for ``thscode`` in the window ending at ``curr_date``.
+# ---------------------------------------------------------------------------
+# CDP backend: fetch inside a real Chrome page (passes WAF + login chain)
+# ---------------------------------------------------------------------------
 
-    Returns a formatted list of recent posts (title, tone hint, heat, time) or
-    a ``DATA_UNAVAILABLE: ...`` sentinel when no token / request failure.
-    """
-    token = _token()
-    if not token:
-        return (
-            "DATA_UNAVAILABLE: 雪球数据未配置（缺 XUEQIU_A_TOKEN / XUEQIU_COOKIE）。"
-            "雪球讨论是 A 股散户情绪的补充代理；无数据时请以热股榜为准，勿臆造讨论内容。"
-        )
+def _cdp_port() -> int | None:
+    raw = os.environ.get("XUEQIU_CDP_PORT", "").strip()
+    if not raw:
+        return None
     try:
-        code = _resolve_code(thscode)
-    except ValueError as exc:
-        return f"DATA_UNAVAILABLE: {exc}"
+        return int(raw)
+    except ValueError:
+        return None
 
-    cutoff = datetime.strptime(curr_date, "%Y-%m-%d") - timedelta(days=int(look_back_days))
+
+def _cdp_targets(port: int) -> list[dict]:
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=5) as r:
+            return [t for t in json.loads(r.read().decode("utf-8")) if t.get("type") == "page"]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("xueqiu CDP: devtools not reachable on port %s: %s", port, exc)
+        return []
+
+
+async def _cdp_fetch_page(ws_url: str, code: str, count: int) -> dict | None:
+    """Run the API fetch inside the page context so cookies + WAF signature apply."""
+    expr = (
+        f"(async () => {{"
+        f"  const r = await fetch('{XUEQIU_API}?count={count}&comment=0&symbol={code}"
+        f"&hl=0&source=all&sort=time&page=1&q={code}&type=11', "
+        f"{{ credentials: 'include', headers: {{ 'Accept': 'application/json' }} }});"
+        f"  const j = await r.json();"
+        f"  return JSON.stringify(j);"
+        f"}})()"
+    )
+    import websockets
+
+    try:
+        async with websockets.connect(ws_url, max_size=20_000_000) as ws:
+            await ws.send(json.dumps({"id": 1, "method": "Runtime.evaluate",
+                                      "params": {"expression": expr, "awaitPromise": True}}))
+            while True:
+                msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=40))
+                if msg.get("id") != 1:
+                    continue
+                result = (msg.get("result") or {}).get("result", {})
+                value = result.get("value")
+                if result.get("exceptionDetails"):
+                    logger.warning("xueqiu CDP: page fetch threw: %s",
+                                   result["exceptionDetails"].get("text"))
+                    return None
+                if isinstance(value, str):
+                    return json.loads(value)
+                return value
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("xueqiu CDP: websocket fetch failed: %s", exc)
+        return None
+
+
+def _cdp_fetch(code: str, count: int) -> dict | None:
+    port = _cdp_port()
+    if port is None:
+        return None
+    for target in _cdp_targets(port):
+        ws = target.get("webSocketDebuggerUrl")
+        if not ws:
+            continue
+        try:
+            payload = asyncio.run(_cdp_fetch_page(ws, code, count))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("xueqiu CDP: target %s failed: %s", target.get("url", "?"), exc)
+            continue
+        if payload is not None:
+            return payload
+    return None
+
+
+def _http_fetch(code: str, count: int, token: str) -> dict | None:
     session = requests.Session()
     session.headers.update({
         "User-Agent": (
@@ -89,43 +166,70 @@ def get_xueqiu_sentiment(thscode: str, curr_date: str, look_back_days: int = 7, 
         "Referer": f"https://xueqiu.com/S/{code}",
     })
     try:
-        # Seed the session (xueqiu sets a device cookie) then fetch the feed.
         session.get(XUEQIU_HOME, timeout=REQUEST_TIMEOUT)
         resp = session.get(
             XUEQIU_API,
             params={
-                "count": str(max(limit, 20)),
-                "comment": "0",
-                "symbol": code,
-                "hl": "0",
-                "source": "all",
-                "sort": "time",
-                "page": "1",
-                "q": code,
-                "type": "11",
+                "count": str(count), "comment": "0", "symbol": code,
+                "hl": "0", "source": "all", "sort": "time", "page": "1",
+                "q": code, "type": "11",
             },
             timeout=REQUEST_TIMEOUT,
         )
         resp.raise_for_status()
-        payload = resp.json()
-    except Exception as exc:  # noqa: BLE001 — sentinel, never raise into the analyst
-        logger.warning("xueqiu fetch failed for %s: %s", thscode, exc)
-        return f"DATA_UNAVAILABLE: 雪球数据获取失败（{exc}）。请以热股榜为准。"
+        return resp.json()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("xueqiu http fetch failed for %s: %s", code, exc)
+        return None
+
+
+def get_xueqiu_sentiment(thscode: str, curr_date: str, look_back_days: int = 7, limit: int = 20) -> str:
+    """Xueqiu discussion stream for ``thscode`` in the window ending at ``curr_date``.
+
+    Returns a formatted list of recent posts (title, tone hint, heat, time) or
+    a ``DATA_UNAVAILABLE: ...`` sentinel when no backend is usable.
+    """
+    try:
+        code = _resolve_code(thscode)
+    except ValueError as exc:
+        return f"DATA_UNAVAILABLE: {exc}"
+
+    count = max(int(limit), 20)
+    payload = _cdp_fetch(code, count)
+    backend = "cdp"
+    if payload is None:
+        token = _token()
+        if not token:
+            return (
+                "DATA_UNAVAILABLE: 雪球数据不可用（CDP 未配置 XUEQIU_CDP_PORT，"
+                "且缺 XUEQIU_A_TOKEN / XUEQIU_COOKIE）。请以热股榜为准，勿臆造讨论内容。"
+            )
+        payload = _http_fetch(code, count, token)
+        backend = "http"
+    if payload is None:
+        return "DATA_UNAVAILABLE: 雪球数据获取失败（CDP 与 HTTP 后端均不可用）。请以热股榜为准。"
 
     items = ((payload.get("data") or {}).get("list")) or payload.get("list") or []
+    cutoff = datetime.strptime(curr_date, "%Y-%m-%d") - timedelta(days=int(look_back_days))
     rows = []
     seen = set()
     for it in items:
         title = (it.get("title") or it.get("description") or "").strip()
+        # Strip inline links/tags that pollute titles (e.g. <a href=...>).
+        title = re.sub(r"<[^>]+>", "", title).strip()
         if not title or title in seen:
             continue
         seen.add(title)
         published = _fmt_ts(it.get("created_at") or it.get("time"))
         if published:
             try:
-                if datetime.strptime(published, "%Y-%m-%d %H:%M") > datetime.strptime(curr_date, "%Y-%m-%d"):
-                    continue  # look-ahead safety
-                if datetime.strptime(published, "%Y-%m-%d %H:%M") < cutoff:
+                published_dt = datetime.strptime(published, "%Y-%m-%d %H:%M")
+                # Date-level look-ahead safety: posts published on the analysis
+                # day itself (any hour, local time) are valid; only strictly
+                # later calendar days are dropped.
+                if published_dt.date() > datetime.strptime(curr_date, "%Y-%m-%d").date():
+                    continue
+                if published_dt < cutoff:
                     continue
             except ValueError:
                 pass
@@ -137,9 +241,10 @@ def get_xueqiu_sentiment(thscode: str, curr_date: str, look_back_days: int = 7, 
         if len(rows) >= int(limit):
             break
 
+    tag = f"[雪球·{backend}]"
     if not rows:
-        return f"雪球讨论（{thscode}）：窗口内无帖子（{cutoff:%Y-%m-%d} ~ {curr_date}）"
+        return f"雪球讨论（{thscode}）：窗口内无帖子（{cutoff:%Y-%m-%d} ~ {curr_date}） {tag}"
     return (
-        f"## 雪球讨论（{thscode}）{cutoff:%Y-%m-%d} ~ {curr_date}（Top{len(rows)}）\n"
+        f"## 雪球讨论（{thscode}）{cutoff:%Y-%m-%d} ~ {curr_date}（Top{len(rows)}） {tag}\n"
         + "\n".join(rows)
     )
