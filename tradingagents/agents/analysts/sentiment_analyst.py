@@ -45,6 +45,7 @@ from tradingagents.agents.utils.structured import (
 from tradingagents.dataflows import hithink_special
 from tradingagents.dataflows.reddit import fetch_reddit_posts
 from tradingagents.dataflows.stocktwits import fetch_stocktwits_messages
+from tradingagents.dataflows.xueqiu import get_xueqiu_sentiment
 
 _A_SHARE = re.compile(r"^\d{6}\.(SH|SZ|BJ)$", re.IGNORECASE)
 
@@ -77,7 +78,12 @@ def create_sentiment_analyst(llm):
         reddit_block = fetch_reddit_posts(ticker)
         # A-shares: the overseas social sources are usually empty, so add the
         # hot-rank leaderboard as a retail-attention proxy when applicable.
-        hot_block = hithink_special.hot_stocks("day") if _A_SHARE.fullmatch(ticker.strip()) else ""
+        is_a_share = bool(_A_SHARE.fullmatch(ticker.strip()))
+        hot_block = hithink_special.hot_stocks("day") if is_a_share else ""
+        # A-shares: Xueqiu (雪球) discussion as a second retail-attention /
+        # tone proxy (keyless-friendly; degrades to DATA_UNAVAILABLE without a
+        # token). Only injected for A-shares to keep US reports unchanged.
+        xueqiu_block = get_xueqiu_sentiment(ticker, end_date) if is_a_share else ""
 
         system_message = _build_system_message(
             ticker=ticker,
@@ -87,6 +93,7 @@ def create_sentiment_analyst(llm):
             stocktwits_block=stocktwits_block,
             reddit_block=reddit_block,
             hot_block=hot_block,
+            xueqiu_block=xueqiu_block,
         )
 
         prompt = ChatPromptTemplate.from_messages(
@@ -141,6 +148,7 @@ def _build_system_message(
     stocktwits_block: str,
     reddit_block: str,
     hot_block: str = "",
+    xueqiu_block: str = "",
 ) -> str:
     """Assemble the sentiment-analyst system message with structured data blocks."""
     hot_section = ""
@@ -155,6 +163,20 @@ attention proxy instead, and say so explicitly in the report.
 <start_of_hot_rank>
 {hot_block}
 <end_of_hot_rank>
+"""
+    xueqiu_section = ""
+    if xueqiu_block:
+        xueqiu_section = f"""
+### A-share Xueqiu (雪球) discussion — second retail proxy for A-shares
+Chinese retail/institutional investors' posts about the ticker. Titles carry a
+coarse tone hint (偏多?/偏空?) that is heuristic — weight heat and volume of
+discussion over a single post. A DATA_UNAVAILABLE block means no token was
+configured or the fetch failed; treat it as 'no Xueqiu signal', do not invent
+posts.
+
+<start_of_xueqiu>
+{xueqiu_block}
+<end_of_xueqiu>
 """
     return f"""You are a financial market sentiment analyst. Your task is to produce a comprehensive sentiment report for {ticker} covering the period from {start_date} to {end_date}, drawing on three complementary data sources that have already been collected for you.
 
@@ -209,7 +231,7 @@ Fill the following fields:
 - **narrative**: Full source-by-source breakdown, divergences, dominant narrative themes, catalysts and risks, and a markdown summary table of key sentiment signals (direction, source, supporting evidence).
 
 {get_language_instruction()}
-{get_a_share_rules_context()}{hot_section}"""
+{get_a_share_rules_context()}{hot_section}{xueqiu_section}"""
 
 
 # ---------------------------------------------------------------------------

@@ -121,22 +121,26 @@ TradingAgents 原版面向美股（T+0、无涨跌幅限制、连续定价）。
 | `get_dragon_tiger(date?, thscode?)` | 龙虎榜，机构 vs 游资净买入 | 验证机构/游资资金流向（可过滤单只标的） |
 | `get_hot_stocks(period)` | 热股榜（日榜/小时榜），热度 + 排名趋势 | A 股散户/游资关注度代理 |
 | `is_trading_day(date)` | 是否 A 股交易日（中国节假日日历） | 确认日期可交易，避免在休市日提交易 |
+| `get_global_market_context(curr_date)` | 隔夜外盘快照：美股三大指数/费半、VIX、美债 10Y、美元指数、原油/黄金、日经/恒生 + 关键词过滤的全球事件标题 | 评估隔夜外盘对 A 股开盘的非对称影响（下跌拖累、上涨不保证），作为风险背景事实而非方向判断 |
+| `get_supply_chain_context(thscode, curr_date)` | 供应链背景：公司身份 + 近 90 日标题含产能/收购/订单/国产替代等关键词的公告 + 龙虎榜题材标签 | "卡脖子"证据定位：公司处于产业链哪一环、近期有无产能/并购/订单信号；**硬约束：自给率/产能周期/寡头份额等无数据源的事实须标注『待验证假设』，禁止编造** |
 
 `tradingagents/agents/utils/news_data_tools.py` 提供 `get_policy_news` 工具（见 §3.2），
-二者均在 `agent_utils.py` 与 `graph/trading_graph.py` 中注册/导出。
+`global_market_tools.py` / `supply_chain_tools.py` 提供上述外盘与供应链工具，
+均在 `agent_utils.py` 与 `graph/trading_graph.py` 中注册/导出。
 
 > **重要**：这些工具必须在 `trading_graph.py::_create_tool_nodes()` 的
-> `market` / `news` ToolNode 里注册（已注册），否则 LLM 能"看到"工具却无法执行，
-> 会出现 "not a valid tool" 报错（历史修复见 §13）。
+> `market` / `news` / `fundamentals` / `choke` ToolNode 里注册（已注册），否则 LLM 能
+> "看到"工具却无法执行，会出现 "not a valid tool" 报错（历史修复见 §13）。
 
 ## 7. Agent 适配明细
 
 | Agent | 适配内容 |
 |---|---|
-| 基本面分析师 | + A 股规则上下文；用 `get_fundamentals` + 三表（中文标签、前视过滤） |
-| 市场分析师 | + A 股规则上下文；绑定 4 个市场工具；prompt 显式要求：**涨停/跌停日 K 线不作常规技术信号**（涨跌停扭曲 RSI/MACD、封板日不可成交）；用 `get_verified_market_snapshot` 作为精确数值唯一依据 |
-| 新闻分析师 | + A 股规则上下文；绑定 `get_policy_news` / `get_market_context` / `is_trading_day`；prompt 把政策新闻列为 A 股第一权重输入 |
-| 情绪分析师 | A 股时注入**热股榜**作为散户关注度代理（海外社交源对 A 股近乎无覆盖，空块不算信号） |
+| 基本面分析师 | + A 股规则上下文；用 `get_fundamentals` + 三表（中文标签、前视过滤）；A 股时另调用 `get_supply_chain_context` 对照财务看卡脖子定位 |
+| 市场分析师 | + A 股规则上下文 + **卡脖子六步框架**；绑定 4 个市场工具 + 外盘快照 + 供应链上下文；prompt 显式要求：**涨停/跌停日 K 线不作常规技术信号**（涨跌停扭曲 RSI/MACD、封板日不可成交）；用 `get_verified_market_snapshot` 作为精确数值唯一依据 |
+| 新闻分析师 | + A 股规则上下文；绑定 `get_policy_news` / `get_market_context` / `is_trading_day` / `get_global_market_context`；prompt 把政策新闻列为 A 股第一权重输入，外盘影响按**非对称传导**表述 |
+| 情绪分析师 | A 股时注入**热股榜**作为散户关注度代理（海外社交源对 A 股近乎无覆盖，空块不算信号）；可选注入**雪球讨论**（`XUEQIU_A_TOKEN` 配置后生效，无 token 降级为 DATA_UNAVAILABLE 并回退热股榜） |
+| **卡脖子分析师（新增）** | 独立 agent，专职供应链瓶颈定位：产业链分层定位 → 瓶颈候选判定 → 信号交叉验证（市场环境/龙虎榜/热股榜/验证快照）→ 六条排除规则筛"真瓶颈 vs 伪概念" → 输出一行"卡脖子定位"+ 待验证假设清单。产出 `choke_report` 进入研究员辩论 |
 | 多空研究员 / 交易员 / 风控三人组 / 组合经理 | + A 股规则上下文（T+1、涨跌停、PE 陷阱等贯穿全程） |
 
 ## 8. 基准指数映射
@@ -181,7 +185,7 @@ output/
 
 ### 10.2 报告内容（`scripts/log_to_reports.py` + `tradingagents/report_chart.py`）
 
-- 从运行日志提取五大章节：市场/技术分析、情绪分析、新闻与宏观、基本面、交易员最终提案；
+- 从运行日志提取六大章节：市场/技术分析、情绪分析、新闻与宏观、基本面、**供应链卡脖子分析**、交易员最终提案；
 - 自动生成**最终交易提案卡片**（BUY/HOLD/SELL + 入场/止损/仓位）；
 - 内置**股价走势可视化**：ASCII 迷你走势图 + SVG 折线图（MA20、区间最低/最高、终点收盘标注）；
   日志缺少 CSV 时自动回退到持久化 OHLCV 存储（按本次数据窗口裁剪）；
@@ -236,6 +240,11 @@ TRADINGAGENTS_HITHINK_CACHE=1          # 磁盘缓存同花顺响应（output/.c
 TRADINGAGENTS_HITHINK_CACHE_TTL=21600  # 秒，默认 6h
 TRADINGAGENTS_HITHINK_STORE=1          # 累加 K 线到 output/.store/ohlcv/（§9）
 
+# --- 雪球（可选）：A 股散户讨论情绪的第二代理 ---
+# 从雪球登录态 cookie 中取 xq_a_token；未配置时情绪分析师将该源报告为
+# DATA_UNAVAILABLE 并回退到热股榜。仅缓存标题/热度元数据，不转载全文。
+#XUEQIU_A_TOKEN=
+
 # --- 可选 ---
 TRADINGAGENTS_OUTPUT_DIR=output        # 交付物根目录
 TRADINGAGENTS_BENCHMARK_TICKER=        # 强制覆盖基准指数
@@ -247,14 +256,18 @@ TRADINGAGENTS_BENCHMARK_TICKER=        # 强制覆盖基准指数
   DeepSeek 等上游返回 `content-encoding: br`，httpx2 2.12 的 `BrotliDecoder` 与 google-brotli
   的 `process()` 签名不兼容会抛 `TypeError`；补丁去掉 `output_buffer_limit` 关键字。
 - **A 股工具必须注册进 ToolNode**：工具在 LLM 侧 `bind_tools` 只是"让模型看见"，真正执行需要
-  `trading_graph.py::_create_tool_nodes()` 里 `market`/`news` 两个 ToolNode 也注册同名工具，
-  否则调用报 "not a valid tool" 且分析师会误报"工具不可用"。
+  `trading_graph.py::_create_tool_nodes()` 里对应 ToolNode 也注册同名工具，
+  否则调用报 "not a valid tool" 且分析师会误报"工具不可用"。新增的
+  `market` / `news` / `fundamentals` / `choke` 四个 ToolNode 均按此注册。
 - **调试日志完整捕获并行工具调用**：`debug=True` 流式打印按 `(类型, 内容, 工具调用签名)` 去重，
   并行调用（一个回合多个工具）的**全部**结果都会落日志，K 线 CSV 不再丢失。
 - **报告章节分类的稳健性**：新闻报告可能提及"基本面/ROE"、基本面报告标题可能是"资产负债结构"
-  而非"资产负债表"、新闻标题可能是"新闻与趋势研究报告"——分类器按
-  `news → sentiment → fundamentals → market` 顺序用强特征判定，避免互相抢段。
-- **前视安全**：财务报表只取 `报告期 ≤ 分析日期`；RSS 无日期条目直接丢弃。
+  而非"资产负债表"、新闻标题可能是"新闻与趋势研究报告"、卡脖子报告以"卡脖子"为强特征——
+  分类器按 `news → sentiment → fundamentals → choke → market` 顺序用强特征判定，避免互相抢段。
+- **外盘快照快速失败**：外盘是背景上下文而非核心数据，yfinance 全局限流时每个符号最多重试 1 次、
+  连续 2 次失败即整体降级（DATA_UNAVAILABLE），避免 11 个符号 × 3 次退避拖垮整轮分析。
+- **前视安全**：财务报表只取 `报告期 ≤ 分析日期`；RSS 无日期条目直接丢弃；雪球只取
+  `发布时间 ≤ 分析日期` 的帖子。
 
 ## 14. 测试
 
@@ -262,11 +275,13 @@ TRADINGAGENTS_BENCHMARK_TICKER=        # 强制覆盖基准指数
 python -m pytest tests/test_hithink.py tests/test_cn_news.py \
   tests/test_hithink_store.py tests/test_report_chart.py \
   tests/test_a_share_context.py tests/test_market_toolnode.py \
-  tests/test_env_overrides.py tests/test_dataflows_config.py -q
+  tests/test_a_share_enhancements.py tests/test_env_overrides.py \
+  tests/test_dataflows_config.py -q
 ```
 
 覆盖：供应商路由/错误分类、中文新闻解析、存储合并与窗口规划、图表生成与章节分类、
-12 个 agent 的规则注入、ToolNode 注册、环境变量覆盖等。全仓测试 640+ 通过。
+13 个 agent 的规则注入、ToolNode 注册、供应链/外盘/雪球工具降级、环境变量覆盖等。
+全仓测试 640+ 通过。
 
 ## 15. 致谢与上游项目
 

@@ -114,6 +114,9 @@ def classify(seg: str) -> str | None:
     # market (observed with 长鑫科技 688825).
     if "基本面" in s and any(k in s for k in ("公司概况", "资产负债", "利润表", "现金流量", "历史财务", "营业成本")):
         return "fundamentals"
+    # Choke-Point analyst: supply-chain / 卡脖子 positioning report (A-shares).
+    if "卡脖子" in s and ("供应链" in s or "瓶颈" in s or "产业链" in s):
+        return "choke"
     if "技术分析报告" in s or ("FINAL TRANSACTION PROPOSAL" in s and
                                any(k in s for k in ("均线", "RSI", "ATR", "布林"))):
         return "market"
@@ -283,7 +286,8 @@ SECTION_TITLES = [
     ("sentiment", "二、情绪分析报告"),
     ("news", "三、新闻与宏观环境研究报告"),
     ("fundamentals", "四、基本面深度分析报告"),
-    ("trader", "五、交易员最终提案"),
+    ("choke", "五、供应链卡脖子分析报告"),
+    ("trader", "六、交易员最终提案"),
 ]
 
 

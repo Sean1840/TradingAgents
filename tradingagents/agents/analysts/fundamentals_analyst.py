@@ -9,6 +9,8 @@ from tradingagents.agents.utils.agent_utils import (
     get_instrument_context_from_state,
     get_language_instruction,
 )
+from tradingagents.agents.utils.choke_point_rules import get_choke_point_rules_context
+from tradingagents.agents.utils.supply_chain_tools import get_supply_chain_context
 
 
 def create_fundamentals_analyst(llm):
@@ -21,14 +23,17 @@ def create_fundamentals_analyst(llm):
             get_balance_sheet,
             get_cashflow,
             get_income_statement,
+            get_supply_chain_context,
         ]
 
         system_message = (
             "You are a researcher tasked with analyzing fundamental information over the past week about a company. Please write a comprehensive report of the company's fundamental information such as financial documents, company profile, basic company financials, and company financial history to gain a full view of the company's fundamental information to inform traders. Make sure to include as much detail as possible. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."
             + " Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."
             + " Use the available tools: `get_fundamentals` for comprehensive company analysis, `get_balance_sheet`, `get_cashflow`, and `get_income_statement` for specific financial statements."
+            + " For A-shares, also call `get_supply_chain_context` to see the company's supply-chain evidence (产能/扩产/收购/订单/国产替代 announcements + dragon-tiger concept tags) and weigh the 卡脖子 positioning against the financials."
             + get_language_instruction()
-            + get_a_share_rules_context(),
+            + get_a_share_rules_context()
+            + get_choke_point_rules_context(),
         )
 
         prompt = ChatPromptTemplate.from_messages(

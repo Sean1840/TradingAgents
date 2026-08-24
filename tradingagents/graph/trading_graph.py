@@ -34,6 +34,8 @@ from tradingagents.agents.utils.a_share_market_tools import (
     get_market_context,
     is_trading_day,
 )
+from tradingagents.agents.utils.global_market_tools import get_global_market_context
+from tradingagents.agents.utils.supply_chain_tools import get_supply_chain_context
 from tradingagents.agents.utils.memory import TradingMemoryLog
 from tradingagents.dataflows.config import set_config
 from tradingagents.dataflows.utils import safe_ticker_component
@@ -74,7 +76,7 @@ class TradingAgentsGraph:
 
     def __init__(
         self,
-        selected_analysts=("market", "social", "news", "fundamentals"),
+        selected_analysts=("market", "social", "news", "fundamentals", "choke"),
         debug=False,
         config: dict[str, Any] = None,
         callbacks: list | None = None,
@@ -213,6 +215,11 @@ class TradingAgentsGraph:
                     get_dragon_tiger,
                     get_hot_stocks,
                     is_trading_day,
+                    # Overnight global-market backdrop (asymmetric spillover
+                    # into the A-share open).
+                    get_global_market_context,
+                    # Supply-chain / 卡脖子 evidence context.
+                    get_supply_chain_context,
                 ]
             ),
             "social": ToolNode(
@@ -235,6 +242,8 @@ class TradingAgentsGraph:
                     get_policy_news,
                     get_market_context,
                     is_trading_day,
+                    # Overnight global-market backdrop for the macro/news view.
+                    get_global_market_context,
                 ]
             ),
             "fundamentals": ToolNode(
@@ -244,6 +253,18 @@ class TradingAgentsGraph:
                     get_balance_sheet,
                     get_cashflow,
                     get_income_statement,
+                    # Supply-chain / 卡脖子 evidence context (bottleneck lens).
+                    get_supply_chain_context,
+                ]
+            ),
+            "choke": ToolNode(
+                [
+                    # Supply-chain / 卡脖子 lens tools for the choke-point analyst.
+                    get_supply_chain_context,
+                    get_market_context,
+                    get_dragon_tiger,
+                    get_hot_stocks,
+                    get_verified_market_snapshot,
                 ]
             ),
         }
@@ -518,6 +539,7 @@ class TradingAgentsGraph:
             "sentiment_report": final_state["sentiment_report"],
             "news_report": final_state["news_report"],
             "fundamentals_report": final_state["fundamentals_report"],
+            "choke_report": final_state.get("choke_report", ""),
             "investment_debate_state": {
                 "bull_history": final_state["investment_debate_state"]["bull_history"],
                 "bear_history": final_state["investment_debate_state"]["bear_history"],

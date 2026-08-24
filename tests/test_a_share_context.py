@@ -13,6 +13,7 @@ from tradingagents.dataflows import hithink_special
 # Every agent whose output reaches the saved report must apply the A-share
 # rules context (T+1, price limits, ST, disclosure rhythm, cyclical PE trap).
 AGENT_SOURCES = [
+    "tradingagents/agents/analysts/choke_point_analyst.py",
     "tradingagents/agents/analysts/fundamentals_analyst.py",
     "tradingagents/agents/analysts/market_analyst.py",
     "tradingagents/agents/analysts/news_analyst.py",

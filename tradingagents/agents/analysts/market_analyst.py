@@ -14,6 +14,9 @@ from tradingagents.agents.utils.agent_utils import (
     get_stock_data,
     get_verified_market_snapshot,
 )
+from tradingagents.agents.utils.choke_point_rules import get_choke_point_rules_context
+from tradingagents.agents.utils.global_market_tools import get_global_market_context
+from tradingagents.agents.utils.supply_chain_tools import get_supply_chain_context
 
 
 def create_market_analyst(llm):
@@ -30,6 +33,8 @@ def create_market_analyst(llm):
             get_dragon_tiger,
             get_hot_stocks,
             is_trading_day,
+            get_global_market_context,
+            get_supply_chain_context,
         ]
 
         system_message = (
@@ -63,10 +68,13 @@ Before writing the final report, call get_verified_market_snapshot for this tick
 
 For A-shares, additionally call get_market_context(curr_date) to assess the market regime (limit-up/limit-down breadth, consecutive-limit-up ladder), and use get_dragon_tiger / get_hot_stocks when relevant to the ticker. A-share price limits (涨跌停 ±10%/±20%) distort momentum and RSI readings near the limit — note explicitly when a bar closed at its limit, and treat limit-locked days as non-tradable rather than as technical signals.
 
+For A-shares also call get_global_market_context(curr_date) to weigh the overnight overseas backdrop: a large overnight drop usually drags the A-share open, while an overnight rally does NOT guarantee A-share gains (policy / domestic funds can dominate) — treat it as a risk-backdrop fact, not a direction call. And call get_supply_chain_context(ticker, curr_date) to see the ticker's supply-chain evidence (产能/收购/订单/国产替代 announcements + dragon-tiger concept tags); use it as a bottleneck lens without inventing supply-chain numbers.
+
 Write a very detailed and nuanced report of the trends you observe. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."""
             + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
             + get_language_instruction()
             + get_a_share_rules_context()
+            + get_choke_point_rules_context()
         )
 
         prompt = ChatPromptTemplate.from_messages(
