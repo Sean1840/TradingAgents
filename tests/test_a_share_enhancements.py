@@ -153,6 +153,20 @@ class ChokeAnalystWiringTests(unittest.TestCase):
         # a market report must not be stolen
         self.assertEqual(classify("# 688432.SH 深度技术分析报告\n均线与 RSI"), "market")
 
+    def test_market_report_mentioning_choke_not_stolen(self):
+        """The market/fundamentals analysts now reference 卡脖子 in passing (the
+        framework is injected into their prompts); only a report whose TITLE
+        contains 卡脖子 belongs to the choke section."""
+        from scripts.log_to_reports import classify
+
+        seg = (
+            "# `688432.SH`（有研硅）交易分析报告 —— 2026-08-21\n"
+            "FINAL TRANSACTION PROPOSAL: **HOLD**\n"
+            "## 一、市场环境\n"
+            "结合卡脖子框架审视：供应链瓶颈环节待验证假设。均线与 RSI 解读见下。"
+        )
+        self.assertEqual(classify(seg), "market")
+
 
 if __name__ == "__main__":
     unittest.main()
