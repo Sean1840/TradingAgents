@@ -115,10 +115,11 @@ def classify(seg: str) -> str | None:
     if "基本面" in s and any(k in s for k in ("公司概况", "资产负债", "利润表", "现金流量", "历史财务", "营业成本")):
         return "fundamentals"
     # Choke-Point analyst: supply-chain / 卡脖子 positioning report (A-shares).
-    # Match on the report TITLE (line starting with # containing 卡脖子), not
-    # any mention in the body — the market/fundamentals analysts also reference
+    # Match on the report TITLE (a heading line containing 卡脖子), not any
+    # mention in the body — the market/fundamentals analysts also reference
     # 卡脖子 in passing now that the framework is injected into their prompts.
-    if re.search(r"^#\s+.*卡脖子", s, flags=re.MULTILINE):
+    # The choke analyst sometimes uses "## <ticker> 卡脖子/供应链定位报告".
+    if re.search(r"^#{1,4}\s+.*卡脖子", s, flags=re.MULTILINE):
         return "choke"
     if "技术分析报告" in s or ("FINAL TRANSACTION PROPOSAL" in s and
                                any(k in s for k in ("均线", "RSI", "ATR", "布林"))):

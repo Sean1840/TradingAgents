@@ -18,7 +18,9 @@ def parse_stock_csv_blocks(log_text: str) -> list[dict]:
     ``[{"Date": "YYYY-MM-DD", "Open": .., "High": .., "Low": .., "Close": ..}]``.
     """
     bars: dict[str, dict] = {}
-    header_re = re.compile(r"^Date,Open,High,Low,Close,Volume(?:,Turnover)?$")
+    # A-share (HiThink) CSV: Date,Open,High,Low,Close,Volume[,Turnover]
+    # HK/global (yfinance) CSV: Date,Open,High,Low,Close,Volume,Dividends,Stock Splits
+    header_re = re.compile(r"^Date,Open,High,Low,Close,Volume(?:,Turnover|,Dividends.*)?$")
     for block in re.split(r"={10,}", log_text):
         lines = block.splitlines()
         start = next((i for i, l in enumerate(lines) if header_re.match(l.strip())), None)
